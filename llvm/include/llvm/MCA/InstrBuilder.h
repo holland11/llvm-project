@@ -49,6 +49,10 @@ class InstrBuilder {
   bool FirstCallInst;
   bool FirstReturnInst;
 
+  bool AllowUnsupportedInstrs;
+
+  Expected<const InstrDesc &> convertUnsupportedInstrToDesc(const MCInst &MCI);
+
   Expected<const InstrDesc &> createInstrDescImpl(const MCInst &MCI);
   Expected<const InstrDesc &> getOrCreateInstrDesc(const MCInst &MCI);
 
@@ -62,7 +66,7 @@ class InstrBuilder {
 public:
   InstrBuilder(const MCSubtargetInfo &STI, const MCInstrInfo &MCII,
                const MCRegisterInfo &RI, const MCInstrAnalysis *IA,
-               InstrPostProcess &IPP);
+               InstrPostProcess &IPP, bool AllowUnsupportedInstrs);
 
   void clear() {
     Descriptors.clear();

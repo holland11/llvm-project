@@ -32,6 +32,7 @@
 #include "Views/SchedulerStatistics.h"
 #include "Views/SummaryView.h"
 #include "Views/TimelineView.h"
+#include "Views/UnsupportedInstructionView.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCCodeEmitter.h"
@@ -228,6 +229,13 @@ static cl::opt<bool> DisableCustomBehaviour(
     "disable-cb",
     cl::desc(
         "Disable custom behaviour (use the default class which does nothing)."),
+    cl::cat(ToolOptions), cl::init(false));
+
+static cl::opt<bool> AllowUnsupportedInstrs(
+    "allow-unsupported-instructions",
+    cl::desc("Convert unsupported instructions to 1 latency, 1 uOp, 0 resource "
+             "units, 0 register dependencies. Unsupported instructions would "
+             "normally cause an error instead."),
     cl::cat(ViewOptions), cl::init(false));
 
 namespace {
@@ -481,7 +489,7 @@ int main(int argc, char **argv) {
   }
 
   // Create an instruction builder.
-  mca::InstrBuilder IB(*STI, *MCII, *MRI, MCIA.get(), *IPP);
+  mca::InstrBuilder IB(*STI, *MCII, *MRI, MCIA.get(), *IPP, AllowUnsupportedInstrs);
 
   // Create a context to control ownership of the pipeline hardware.
   mca::Context MCA(*MRI, *STI);
@@ -684,6 +692,15 @@ int main(int argc, char **argv) {
           CB->getEndViews(*IP, Insts);
       for (auto &CBView : CBViews)
         Printer.addView(std::move(CBView));
+    }
+
+    if (AllowUnsupportedInstrs) {
+      // Despite the CB->getEndViews() implying that they will come at the end,
+      // if the user decides to allow unsupported instructions, making sure they
+      // are aware of which instrutions were deemed unsupported and what was done
+      // with them is a priority so we put that last.
+      Printer.addView(std::make_unique<mca::UnsupportedInstructionView>(
+          *STI, *IP, Insts, LoweredSequence));
     }
 
     if (!runPipeline(*P))

@@ -29,9 +29,9 @@ InstrBuilder::InstrBuilder(const llvm::MCSubtargetInfo &sti,
                            const llvm::MCInstrInfo &mcii,
                            const llvm::MCRegisterInfo &mri,
                            const llvm::MCInstrAnalysis *mcia,
-                           InstrPostProcess &ipp)
+                           InstrPostProcess &ipp, bool AllowUnsupportedInstrs)
     : STI(sti), MCII(mcii), MRI(mri), MCIA(mcia), IPP(ipp), FirstCallInst(true),
-      FirstReturnInst(true) {
+      FirstReturnInst(true), AllowUnsupportedInstrs(AllowUnsupportedInstrs) {
   const MCSchedModel &SM = STI.getSchedModel();
   ProcResourceMasks.resize(SM.getNumProcResourceKinds());
   computeProcResourceMasks(STI.getSchedModel(), ProcResourceMasks);
@@ -538,6 +538,99 @@ Error InstrBuilder::verifyInstrDesc(const InstrDesc &ID,
 }
 
 Expected<const InstrDesc &>
+InstrBuilder::convertUnsupportedInstrToDesc(const MCInst &MCI) {
+  // Rather than having the program terminate when an unsupported
+  // instruction is encountered, we are going to issue a warning and create
+  // the instruction as if it has 1 latency, 1 uOp, 0 hardware units, and
+  // no register dependencies. The instruction's operands can still be
+  // collected by InstrPostProcess if they are desired.
+  unsigned short Opcode = MCI.getOpcode();
+  const MCInstrDesc &MCDesc = MCII.get(Opcode);
+  const MCSchedModel &SM = STI.getSchedModel();
+  unsigned SchedClassID = MCDesc.getSchedClass();
+  bool IsVariant = SM.getSchedClassDesc(SchedClassID)->isVariant();
+
+  // Try to solve variant scheduling classes.
+  if (IsVariant) {
+    unsigned CPUID = SM.getProcessorID();
+    while (SchedClassID && SM.getSchedClassDesc(SchedClassID)->isVariant())
+      SchedClassID =
+          STI.resolveVariantSchedClass(SchedClassID, &MCI, &MCII, CPUID);
+
+    if (!SchedClassID) {
+      return make_error<InstructionError<MCInst>>(
+          "unable to resolve scheduling class for write variant.", MCI);
+    }
+  }
+
+  assert(
+      SM.getSchedClassDesc(SchedClassID)->NumMicroOps ==
+          MCSchedClassDesc::InvalidNumMicroOps &&
+      "We should only enter this function if the scheduling class is invalid.");
+
+  LLVM_DEBUG(dbgs() << "\n\t\tOpcode Name= " << MCII.getName(Opcode) << '\n');
+  LLVM_DEBUG(dbgs() << "\t\tSchedClassID=" << SchedClassID << '\n');
+
+  if (MCDesc.isCall() && FirstCallInst) {
+    // We don't correctly model calls.
+    WithColor::warning() << "found a call in the input assembly sequence.\n";
+    WithColor::note() << "call instructions are not correctly modeled. "
+                      << "Assume a latency of 100cy.\n";
+    FirstCallInst = false;
+  }
+
+  if (MCDesc.isReturn() && FirstReturnInst) {
+    WithColor::warning() << "found a return instruction in the input"
+                         << " assembly sequence.\n";
+    WithColor::note() << "program counter updates are ignored.\n";
+    FirstReturnInst = false;
+  }
+
+  // Create a new empty descriptor.
+  std::unique_ptr<InstrDesc> ID = std::make_unique<InstrDesc>();
+  ID->NumMicroOps = 1;
+  ID->SchedClassID = SchedClassID;
+  ID->MayLoad = MCDesc.mayLoad();
+  ID->MayStore = MCDesc.mayStore();
+  ID->HasSideEffects = MCDesc.hasUnmodeledSideEffects();
+  
+  // These 7 are set by the SCDesc which is invalid so we default them to 0.
+  ID->BeginGroup = 0;
+  ID->EndGroup = 0;
+  ID->RetireOOO = 0;
+  ID->ImplicitlyUsedProcResUnits = 0;
+  ID->UsedBuffers = 0;
+  ID->UsedProcResGroups = 0;
+  ID->UsedProcResUnits = 0;
+
+  LLVM_DEBUG(dbgs() << "\t\tMaxLatency=" << ID->MaxLatency << '\n');
+  LLVM_DEBUG(dbgs() << "\t\tNumMicroOps=" << ID->NumMicroOps << '\n');
+
+  WithColor::warning()
+      << "this instruction's scheduling class is invalid.\n"
+      << "\tDefaulting to 1 latency, 1 uOp, 0 hardware units,\n"
+      << "\t0 reads, 0 defs.\n";
+  
+  // Give IPP the chance to modify the InstrDesc. This needs to happen now
+  // because the function we are in now returns the InstrDesc as const.
+  bool Modified = IPP.modifyInstrDesc(*ID, MCI);
+  if (Modified) {
+    LLVM_DEBUG(dbgs() << "\nInstruction has been modified by target's InstrPostProcess class.\nInstruction is now:\n");
+    
+  }
+
+  // Now add the new descriptor.
+  bool IsVariadic = MCDesc.isVariadic();
+  if (!IsVariadic && !IsVariant) {
+    Descriptors[MCI.getOpcode()] = std::move(ID);
+    return *Descriptors[MCI.getOpcode()];
+  }
+
+  VariantDescriptors[&MCI] = std::move(ID);
+  return *VariantDescriptors[&MCI];
+}
+
+Expected<const InstrDesc &>
 InstrBuilder::createInstrDescImpl(const MCInst &MCI) {
   assert(STI.getSchedModel().hasInstrSchedModel() &&
          "Itineraries are not yet supported!");
@@ -567,6 +660,9 @@ InstrBuilder::createInstrDescImpl(const MCInst &MCI) {
   // Check if this instruction is supported. Otherwise, report an error.
   const MCSchedClassDesc &SCDesc = *SM.getSchedClassDesc(SchedClassID);
   if (SCDesc.NumMicroOps == MCSchedClassDesc::InvalidNumMicroOps) {
+    if (AllowUnsupportedInstrs) {
+      return convertUnsupportedInstrToDesc(MCI);
+    }
     return make_error<InstructionError<MCInst>>(
         "found an unsupported instruction in the input assembly sequence.",
         MCI);
