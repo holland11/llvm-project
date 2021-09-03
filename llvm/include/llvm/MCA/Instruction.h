@@ -518,6 +518,11 @@ class InstructionBase {
   unsigned Opcode;
 
   // Flags used by the LSUnit.
+  // With the addition of the IPP::modifyInstrDesc() function, it might make
+  // more sense to have these flags (and their corresponding getters and
+  // setters) be a part of the InstrDesc. They were originally placed in
+  // the InstructionBase because the InstrDesc couldn't be modifed by
+  // IPP::postProcessInstruction() (due to the InstrDesc being const).
   bool IsALoadBarrier;
   bool IsAStoreBarrier;
 

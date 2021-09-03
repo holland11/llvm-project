@@ -40,6 +40,7 @@ class InstrBuilder {
   const MCInstrInfo &MCII;
   const MCRegisterInfo &MRI;
   const MCInstrAnalysis *MCIA;
+  InstrPostProcess &IPP;
   SmallVector<uint64_t, 8> ProcResourceMasks;
 
   DenseMap<unsigned short, std::unique_ptr<const InstrDesc>> Descriptors;
@@ -60,7 +61,8 @@ class InstrBuilder {
 
 public:
   InstrBuilder(const MCSubtargetInfo &STI, const MCInstrInfo &MCII,
-               const MCRegisterInfo &RI, const MCInstrAnalysis *IA);
+               const MCRegisterInfo &RI, const MCInstrAnalysis *IA,
+               InstrPostProcess &IPP);
 
   void clear() {
     Descriptors.clear();

@@ -43,6 +43,14 @@ void X86InstrPostProcess::postProcessInstruction(
   setMemBarriers(Inst, MCI);
 }
 
+bool X86InstrPostProcess::modifyInstrDesc(InstrDesc &ID, const MCInst &MCI) {
+  unsigned Opcode = MCI.getOpcode();
+  if (Opcode == 409) {
+    ID.MaxLatency = 10;
+    return true;
+  }
+}
+
 } // namespace mca
 } // namespace llvm
 

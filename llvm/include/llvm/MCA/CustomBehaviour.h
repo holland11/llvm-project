@@ -49,6 +49,28 @@ public:
   /// scheduling model.
   virtual void postProcessInstruction(std::unique_ptr<Instruction> &Inst,
                                       const MCInst &MCI) {}
+  
+  /// This method can be overriden by targets to modify an instruction's
+  /// InstrDesc. This has to be called separate from postProcessInstruction
+  /// because by the time we call postProcessInstruction, the InstrDesc will
+  /// be const. Look at the definition of InstrDesc to get an idea of what kind
+  /// of changes you might need to make in this function vs
+  /// postProcessInstruction. Some examples are the MayLoad, MayStore, and
+  /// RetireOOO flags.
+  /// The return value of this function represents whether any modifications
+  /// were made or not. This is important because this allows InstrBuilder
+  /// to print some debug output making it clear that modifications were made.
+  virtual bool modifyInstrDesc(InstrDesc &ID, const MCInst &MCI) { return false; }
+  
+  /// Some targets may wish to maintain some state within their IPP.
+  /// IPP is created in llvm-mca.cpp before we start working on any individual
+  /// code region. Because of this, if IPP maintains state, it will have its
+  /// state carry over between code regions. This is likely not desirable as
+  /// each region should be thought of as completely independent of the other
+  /// regions. The resetState() method gets invoked within llvm-mca.cpp at the
+  /// beginning of each code region so targets can override this function to
+  /// clear any state that they have left from the previous code region.
+  virtual void resetState() {}
 };
 
 /// Class which can be overriden by targets to enforce instruction

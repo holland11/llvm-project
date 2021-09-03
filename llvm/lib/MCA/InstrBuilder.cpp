@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "llvm/MCA/CustomBehaviour.h"
 #include "llvm/MCA/InstrBuilder.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
@@ -27,8 +28,9 @@ namespace mca {
 InstrBuilder::InstrBuilder(const llvm::MCSubtargetInfo &sti,
                            const llvm::MCInstrInfo &mcii,
                            const llvm::MCRegisterInfo &mri,
-                           const llvm::MCInstrAnalysis *mcia)
-    : STI(sti), MCII(mcii), MRI(mri), MCIA(mcia), FirstCallInst(true),
+                           const llvm::MCInstrAnalysis *mcia,
+                           InstrPostProcess &ipp)
+    : STI(sti), MCII(mcii), MRI(mri), MCIA(mcia), IPP(ipp), FirstCallInst(true),
       FirstReturnInst(true) {
   const MCSchedModel &SM = STI.getSchedModel();
   ProcResourceMasks.resize(SM.getNumProcResourceKinds());
@@ -615,6 +617,14 @@ InstrBuilder::createInstrDescImpl(const MCInst &MCI) {
   // Validation check on the instruction descriptor.
   if (Error Err = verifyInstrDesc(*ID, MCI))
     return std::move(Err);
+  
+  // Give IPP the chance to modify the InstrDesc. This needs to happen now
+  // because the function we are in now returns the InstrDesc as const.
+  bool Modified = IPP.modifyInstrDesc(*ID, MCI);
+  if (Modified) {
+    LLVM_DEBUG(dbgs() << "\nInstruction has been modified by target's InstrPostProcess class.\nInstruction is now:\n");
+    
+  }
 
   // Now add the new descriptor.
   bool IsVariadic = MCDesc.isVariadic();

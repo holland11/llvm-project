@@ -39,6 +39,8 @@ public:
 
   void postProcessInstruction(std::unique_ptr<Instruction> &Inst,
                               const MCInst &MCI) override;
+  
+  bool modifyInstrDesc(InstrDesc &ID, const MCInst &MCI) override;
 };
 
 } // namespace mca
